@@ -1,14 +1,8 @@
 services:
   - type: web
     name: clinica-whatsapp-bot
-    runtime: node
+    runtime: docker
     plan: starter
-    buildCommand: ./render-build.sh
-    startCommand: node index.js
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PUPPETEER_SKIP_DOWNLOAD
-        value: "true"
-      - key: PUPPETEER_EXECUTABLE_PATH
-        value: /usr/bin/chromium
