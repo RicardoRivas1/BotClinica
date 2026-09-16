@@ -30,8 +30,6 @@ const client = new Client({
       '--disable-dev-shm-usage',
       '--disable-gpu',
       '--disable-extensions',
-      '--disable-background-networking',
-      '--single-process',
     ],
   },
 });
@@ -62,7 +60,7 @@ client.on('loading_screen', (p) => console.log(`⏳ Cargando WhatsApp... ${p}%`)
 
 client.on('ready', () => {
   console.log(`\n✅ Bot de *${clinica.nombre}* conectado y escuchando mensajes.`);
-  console.log('   (Deja esta ventana abierta. Ctrl + C para detenerlo.)\n');
+  console.log(`   Sesión activa. Prueba enviando un mensaje al número de WhatsApp vinculado.\n`);
 });
 
 client.on('disconnected', (razon) => {
@@ -74,6 +72,8 @@ client.on('disconnected', (razon) => {
 // ------------------------------------------------------------
 client.on('message', async (msg) => {
   try {
+    console.log(`📩 Mensaje recibido de ${msg.from}: "${msg.body}"`);
+
     // Filtros básicos
     if (msg.from === 'status@broadcast') return;
     if (config.IGNORAR_GRUPOS && msg.from.endsWith('@g.us')) return;
