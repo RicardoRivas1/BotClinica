@@ -1,0 +1,19 @@
+{
+  "name": "clinica-whatsapp-bot",
+  "version": "1.0.0",
+  "description": "Asistente virtual de WhatsApp para clinica medica (vinculacion por codigo QR)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "reset": "node -e \"require('fs').rmSync('./sesion',{recursive:true,force:true});console.log('Sesion borrada. Al iniciar pedira QR de nuevo.')\""
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "latest"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "private": true
+}
