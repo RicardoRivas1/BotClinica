@@ -64,7 +64,7 @@ async function iniciarBot() {
       console.log(`📨 Mensaje: fromMe=${msg.key.fromMe} jid=${msg.key.remoteJid}`);
       if (msg.key.fromMe) continue;
       const chatId = msg.key.remoteJid;
-      if (!chatId.endsWith('@s.whatsapp.net')) continue;
+      if (!chatId.endsWith('@s.whatsapp.net') && !chatId.endsWith('@lid')) continue;
 
       const texto = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
       console.log(`📩 De ${chatId}: "${texto}"`);
