@@ -5,6 +5,8 @@
 const express = require('express');
 const qrcode = require('qrcode-terminal');
 const { Client, LocalAuth } = require('whatsapp-web.js');
+const fs = require('fs');
+const path = require('path');
 
 const { generarRespuesta } = require('./responder');
 const { guardarPendiente } = require('./logger');
@@ -14,8 +16,15 @@ const { clinica, config } = require('./database');
 const app = express();
 app.get('/', (req, res) => res.send('Bot activo'));
 app.listen(process.env.PORT || 3000, () => {
-  console.log(`🌐 Servidor activo en puerto ${process.env.PORT || 3000}`);
+  console.log(`🌐 Puerto ${process.env.PORT || 3000}`);
 });
+
+// Borrar sesión anterior para forzar QR nuevo
+const sesionPath = path.join(__dirname, 'sesion');
+if (fs.existsSync(sesionPath)) {
+  fs.rmSync(sesionPath, { recursive: true, force: true });
+  console.log('🗑️ Sesión anterior borrada');
+}
 
 // Cliente de WhatsApp
 const client = new Client({
@@ -36,9 +45,19 @@ const ultimoContacto = new Map();
 const mensajesPendientes = new Map();
 const DELAY_MS = 3000;
 
+console.log('🚀 Iniciando bot...');
+
 client.on('qr', (qr) => {
-  console.log('\n📲 Escanea este QR:\n');
+  console.log('\n📲 ESCANEA ESTE QR:\n');
   qrcode.generate(qr, { small: true });
+});
+
+client.on('authenticated', () => {
+  console.log('🔐 Autenticado');
+});
+
+client.on('auth_failure', (msg) => {
+  console.error('❌ Error de auth:', msg);
 });
 
 client.on('ready', () => {
@@ -82,7 +101,7 @@ async function procesarMensajes(chatId) {
 
     if (msg.type !== 'chat' || !msg.body?.trim()) {
       await msg.reply(
-        '🙏 Gracias por escribirnos. Solo puedo leer mensajes de texto.\n\n' +
+        '🙏 Solo puedo leer mensajes de texto.\n\n' +
         '📝 Tu mensaje fue registrado.\n\n' + config.CIERRE
       );
       guardarPendiente(chatId, nombre, `[${msg.type}]`);
@@ -106,4 +125,5 @@ async function procesarMensajes(chatId) {
   }
 }
 
+console.log('⏳ Conectando a WhatsApp...');
 client.initialize();
