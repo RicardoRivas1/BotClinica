@@ -1,119 +1,111 @@
 /**
- * BOT DE WHATSAPP — CLÍNICA MÉDICA (Baileys)
+ * BOT DE WHATSAPP — CLÍNICA MÉDICA
  */
 
-require('./keep-alive');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const pino = require('pino');
+const express = require('express');
 const qrcode = require('qrcode-terminal');
-const path = require('path');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 
 const { generarRespuesta } = require('./responder');
 const { guardarPendiente } = require('./logger');
 const { clinica, config } = require('./database');
 
+// Servidor HTTP para mantener Render activo
+const app = express();
+app.get('/', (req, res) => res.send('Bot activo'));
+app.listen(process.env.PORT || 3000, () => {
+  console.log(`🌐 Servidor activo en puerto ${process.env.PORT || 3000}`);
+});
+
+// Cliente de WhatsApp
+const client = new Client({
+  authStrategy: new LocalAuth({ dataPath: './sesion' }),
+  puppeteer: {
+    headless: true,
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-zygote',
+      '--single-process',
+    ],
+  },
+});
+
 const ultimoContacto = new Map();
 const mensajesPendientes = new Map();
 const DELAY_MS = 3000;
 
-async function iniciarBot() {
-  const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'sesion'));
+client.on('qr', (qr) => {
+  console.log('\n📲 Escanea este QR:\n');
+  qrcode.generate(qr, { small: true });
+});
 
-  const sock = makeWASocket({
-    auth: state,
-    logger: pino({ level: 'silent' }),
-  });
+client.on('ready', () => {
+  console.log(`\n✅ Bot de *${clinica.nombre}* conectado.\n`);
+});
 
-  sock.ev.on('creds.update', saveCreds);
+client.on('disconnected', () => {
+  console.log('⚠️ Desconectado. Reconectando...');
+  client.initialize();
+});
 
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect, qr } = update;
+client.on('message', async (msg) => {
+  try {
+    if (msg.from === 'status@broadcast') return;
+    if (config.IGNORAR_GRUPOS && msg.from.endsWith('@g.us')) return;
 
-    if (qr) {
-      console.log('\n📲 Escanea este QR:\n');
-      qrcode.generate(qr, { small: true });
+    console.log(`📩 De ${msg.from}: "${msg.body}"`);
+
+    if (!mensajesPendientes.has(msg.from)) {
+      mensajesPendientes.set(msg.from, []);
     }
+    mensajesPendientes.get(msg.from).push(msg);
 
-    if (connection === 'open') {
-      console.log(`\n✅ Bot de *${clinica.nombre}* conectado.\n`);
-    }
+    const existente = mensajesPendientes.get(msg.from);
+    if (existente._timeout) clearTimeout(existente._timeout);
+    existente._timeout = setTimeout(() => procesarMensajes(msg.from), DELAY_MS);
+  } catch (error) {
+    console.error('❌ Error:', error);
+  }
+});
 
-    if (connection === 'close') {
-      const razon = lastDisconnect?.error?.output?.statusCode;
-      if (razon === DisconnectReason.loggedOut) {
-        console.log('👋 Sesión cerrada. Vuelve a escanear el QR.');
-      } else {
-        console.log('⚠️ Reconectando...');
-        setTimeout(iniciarBot, 3000);
-      }
-    }
-  });
-
-  sock.ev.on('messages.upsert', async (upsert) => {
-    if (upsert.type !== 'notify') return;
-
-    for (const msg of upsert.messages) {
-      if (!msg.message || msg.key.fromMe) continue;
-
-      const chatId = msg.key.remoteJid;
-      if (!chatId.endsWith('@s.whatsapp.net')) continue;
-
-      const texto = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-
-      console.log(`📩 De ${chatId}: "${texto}"`);
-
-      if (!texto.trim()) continue;
-
-      // Debounce: agrupar mensajes
-      if (!mensajesPendientes.has(chatId)) {
-        mensajesPendientes.set(chatId, []);
-      }
-      mensajesPendientes.get(chatId).push({ msg, texto });
-
-      const existente = mensajesPendientes.get(chatId);
-      if (existente._timeout) clearTimeout(existente._timeout);
-      existente._timeout = setTimeout(() => procesarMensajes(sock, chatId), DELAY_MS);
-    }
-  });
-}
-
-async function procesarMensajes(sock, chatId) {
+async function procesarMensajes(chatId) {
   try {
     const mensajes = mensajesPendientes.get(chatId);
     mensajesPendientes.delete(chatId);
     if (!mensajes || !mensajes.length) return;
 
-    const { msg, texto } = mensajes[mensajes.length - 1];
-    const nombre = msg.pushName || 'Sin nombre';
+    const msg = mensajes[mensajes.length - 1];
+    const contacto = await msg.getContact();
+    const nombre = contacto?.pushname || contacto?.name || 'Sin nombre';
+
+    if (msg.type !== 'chat' || !msg.body?.trim()) {
+      await msg.reply(
+        '🙏 Gracias por escribirnos. Solo puedo leer mensajes de texto.\n\n' +
+        '📝 Tu mensaje fue registrado.\n\n' + config.CIERRE
+      );
+      guardarPendiente(chatId, nombre, `[${msg.type}]`);
+      return;
+    }
 
     const ultimo = ultimoContacto.get(chatId) || 0;
     const saludar = Date.now() - ultimo > config.MINUTOS_PARA_SALUDAR_DE_NUEVO * 60 * 1000;
     ultimoContacto.set(chatId, Date.now());
 
-    const { texto: respuesta, resuelto } = generarRespuesta(texto, { saludar });
+    const { texto, resuelto } = generarRespuesta(msg.body, { saludar });
+    await msg.reply(texto);
 
-    console.log(`📤 Respondiendo: "${respuesta.substring(0, 60)}..."`);
-    await sock.sendMessage(chatId, { text: respuesta });
+    console.log(`💬 ${nombre}: "${msg.body}"`);
 
     if (!resuelto) {
-      guardarPendiente(chatId, nombre, texto);
-      await notificarPersonal(sock, chatId, nombre, texto);
+      guardarPendiente(chatId, nombre, msg.body);
     }
   } catch (error) {
     console.error('❌ Error:', error);
   }
 }
 
-async function notificarPersonal(sock, numeroPaciente, nombre, mensaje) {
-  if (!config.NUMERO_PERSONAL) return;
-  const destino = `${config.NUMERO_PERSONAL}@s.whatsapp.net`;
-  const aviso =
-    `🔔 *Consulta sin respuesta*\n\n👤 ${nombre}\n📞 wa.me/${numeroPaciente.replace('@s.whatsapp.net', '')}\n💬 "${mensaje}"`;
-  try {
-    await sock.sendMessage(destino, { text: aviso });
-  } catch (e) {
-    console.error('⚠️ Error al avisar al personal:', e.message);
-  }
-}
-
-iniciarBot();
+client.initialize();
