@@ -1,8 +1,0 @@
-[build]
-builder = "nixpacks"
-
-[deploy]
-startCommand = "node index.js"
-
-[phases.setup]
-nixpacksPkgs = ["nodejs_20"]
