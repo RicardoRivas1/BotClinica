@@ -5,8 +5,9 @@
  * ============================================================
  */
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, isJidUser } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, isJidUser, delay } = require('@whiskeysockets/baileys');
 const pino = require('pino');
+const qrcode = require('qrcode-terminal');
 const path = require('path');
 
 const { generarRespuesta } = require('./responder');
@@ -41,6 +42,8 @@ async function iniciarBot() {
     if (qr) {
       console.log('\n📲 Escanea este código QR desde WhatsApp:');
       console.log('   Ajustes → Dispositivos vinculados → Vincular un dispositivo\n');
+      qrcode.generate(qr, { small: true });
+      console.log('');
     }
 
     if (connection === 'open') {
