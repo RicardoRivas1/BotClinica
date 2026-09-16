@@ -37,7 +37,10 @@ const client = new Client({
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--disable-extensions',
     ],
+    timeout: 60000,
   },
 });
 
