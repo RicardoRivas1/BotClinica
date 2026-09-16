@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const CARPETA = path.join(__dirname, '..', 'data');
+const CARPETA = path.join(__dirname, 'data');
 const ARCHIVO = path.join(CARPETA, 'pendientes.json');
 
 function asegurarArchivo() {

@@ -12,23 +12,21 @@ const { generarRespuesta } = require('./responder');
 const { guardarPendiente } = require('./logger');
 const { clinica, config } = require('./database');
 
-// Servidor HTTP para mantener Render activo
 const app = express();
 app.get('/', (req, res) => res.send('Bot activo'));
 app.listen(process.env.PORT || 3000, () => {
   console.log(`🌐 Puerto ${process.env.PORT || 3000}`);
 });
 
-// Borrar sesión anterior para forzar QR nuevo
 const sesionPath = path.join(__dirname, 'sesion');
 if (fs.existsSync(sesionPath)) {
   fs.rmSync(sesionPath, { recursive: true, force: true });
   console.log('🗑️ Sesión anterior borrada');
 }
 
-// Cliente de WhatsApp
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: './sesion' }),
+  webVersionCache: { type: 'remote', remotePath: 'https://raw.githubusercontent.com/nicepkg/nice-dev/main/nice-dev/whatsapp-web.js/nice-dev/whatsapp-web.js/versions.json' },
   puppeteer: {
     headless: true,
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
@@ -38,7 +36,6 @@ const client = new Client({
       '--disable-dev-shm-usage',
       '--disable-gpu',
       '--disable-software-rasterizer',
-      '--disable-extensions',
     ],
     timeout: 60000,
   },
@@ -55,29 +52,34 @@ client.on('qr', (qr) => {
   qrcode.generate(qr, { small: true });
 });
 
-client.on('authenticated', () => {
-  console.log('🔐 Autenticado');
-});
+client.on('authenticated', () => console.log('🔐 Autenticado'));
 
-client.on('auth_failure', (msg) => {
-  console.error('❌ Error de auth:', msg);
-});
+client.on('auth_failure', (msg) => console.error('❌ Auth falló:', msg));
 
 client.on('ready', () => {
   console.log(`\n✅ Bot de *${clinica.nombre}* conectado.\n`);
 });
 
-client.on('disconnected', () => {
-  console.log('⚠️ Desconectado. Reconectando...');
-  client.initialize();
+client.on('disconnected', (razon) => {
+  console.log('⚠️ Desconectado:', razon);
 });
 
+// Escuchar TODOS los eventos para debug
 client.on('message', async (msg) => {
+  console.log(`📩 MESSAGE EVENT: from=${msg.from} type=${msg.type} body=${msg.body}`);
+  await manejarMensaje(msg);
+});
+
+client.on('message_create', async (msg) => {
+  if (msg.fromMe) {
+    console.log(`📤 MESSAGE_CREATE: to=${msg.to} body=${msg.body}`);
+  }
+});
+
+async function manejarMensaje(msg) {
   try {
     if (msg.from === 'status@broadcast') return;
     if (config.IGNORAR_GRUPOS && msg.from.endsWith('@g.us')) return;
-
-    console.log(`📩 De ${msg.from}: "${msg.body}"`);
 
     if (!mensajesPendientes.has(msg.from)) {
       mensajesPendientes.set(msg.from, []);
@@ -88,9 +90,9 @@ client.on('message', async (msg) => {
     if (existente._timeout) clearTimeout(existente._timeout);
     existente._timeout = setTimeout(() => procesarMensajes(msg.from), DELAY_MS);
   } catch (error) {
-    console.error('❌ Error:', error);
+    console.error('❌ Error message:', error);
   }
-});
+}
 
 async function procesarMensajes(chatId) {
   try {
@@ -116,6 +118,7 @@ async function procesarMensajes(chatId) {
     ultimoContacto.set(chatId, Date.now());
 
     const { texto, resuelto } = generarRespuesta(msg.body, { saludar });
+    console.log(`📤 Respondiendo a ${chatId}: "${texto.substring(0, 50)}..."`);
     await msg.reply(texto);
 
     console.log(`💬 ${nombre}: "${msg.body}"`);
@@ -124,9 +127,9 @@ async function procesarMensajes(chatId) {
       guardarPendiente(chatId, nombre, msg.body);
     }
   } catch (error) {
-    console.error('❌ Error:', error);
+    console.error('❌ Error procesar:', error);
   }
 }
 
-console.log('⏳ Conectando a WhatsApp...');
+console.log('⏳ Conectando...');
 client.initialize();
