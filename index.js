@@ -87,18 +87,20 @@ async function procesar(sock, chatId) {
 
     const { msg, texto } = mensajes[mensajes.length - 1];
     const nombre = msg.pushName || 'Sin nombre';
+    console.log(`⚙️ Procesando mensaje de ${nombre}: "${texto}"`);
 
     const ultimo = ultimoContacto.get(chatId) || 0;
     const saludar = Date.now() - ultimo > config.MINUTOS_PARA_SALUDAR_DE_NUEVO * 60 * 1000;
     ultimoContacto.set(chatId, Date.now());
 
     const { texto: respuesta, resuelto } = generarRespuesta(texto, { saludar });
-    console.log(`📤 Respondiendo a ${nombre}`);
+    console.log(`📤 Enviando respuesta a ${chatId}`);
     await sock.sendMessage(chatId, { text: respuesta });
+    console.log(`✅ Respuesta enviada`);
 
     if (!resuelto) guardarPendiente(chatId, nombre, texto);
   } catch (e) {
-    console.error('❌ Error:', e.message);
+    console.error('❌ Error en procesar:', e.message, e.stack);
   }
 }
 
