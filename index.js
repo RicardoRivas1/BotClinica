@@ -1,150 +1,133 @@
 /**
  * ============================================================
  *  BOT DE WHATSAPP — CLÍNICA MÉDICA
- *  Vinculación por código QR (WhatsApp Web)
- *
- *  Ejecutar:  npm start
- *  Luego:     WhatsApp > Ajustes > Dispositivos vinculados > Vincular dispositivo
+ *  Usa Baileys (ligero, sin Chrome)
  * ============================================================
  */
 
-const qrcode = require('qrcode-terminal');
-const QRCode = require('qrcode');
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, isJidUser } = require('@whiskeysockets/baileys');
+const pino = require('pino');
+const path = require('path');
 
 const { generarRespuesta } = require('./responder');
 const { guardarPendiente } = require('./logger');
 const { clinica, config } = require('./database');
 
-// ------------------------------------------------------------
-// Cliente de WhatsApp
-// ------------------------------------------------------------
-const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: './sesion' }),
-  puppeteer: {
-    headless: true,
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-extensions',
-    ],
-  },
-});
-
 // Memoria en caliente
-const enviadosPorBot = new Set(); // ids de mensajes que envió el bot
-const ultimoContacto = new Map(); // chatId -> timestamp del último mensaje atendido
+const ultimoContacto = new Map();
+const mensajesPendientes = new Map();
+const DELAY_MS = 3000;
 
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ------------------------------------------------------------
-// Eventos de conexión
+// Conexión
 // ------------------------------------------------------------
-client.on('qr', async (qr) => {
-  console.log('\n📲 Escanea este código QR desde WhatsApp:');
-  console.log('   Ajustes → Dispositivos vinculados → Vincular un dispositivo\n');
-  qrcode.generate(qr, { small: true });
+async function iniciarBot() {
+  const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'sesion'));
 
-  // Guardar QR como imagen PNG para escanear cómodamente
-  const rutaQR = require('path').join(__dirname, 'qr-vinculacion.png');
-  await QRCode.toFile(rutaQR, qr, { width: 400, margin: 2 });
-  console.log(`   📷 QR guardado como imagen: qr-vinculacion.png\n`);
-});
+  const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: true,
+    logger: pino({ level: 'silent' }),
+    browser: ['Bot Clinica', 'Chrome', '4.0.0'],
+  });
 
-client.on('authenticated', () => console.log('🔐 Sesión autenticada correctamente.'));
-client.on('auth_failure', (msg) => console.error('❌ Falló la autenticación:', msg));
-client.on('loading_screen', (p) => console.log(`⏳ Cargando WhatsApp... ${p}%`));
+  sock.ev.on('creds.update', saveCreds);
 
-client.on('ready', () => {
-  console.log(`\n✅ Bot de *${clinica.nombre}* conectado y escuchando mensajes.`);
-  console.log(`   Sesión activa. Prueba enviando un mensaje al número de WhatsApp vinculado.\n`);
-});
+  sock.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect, qr } = update;
 
-client.on('disconnected', (razon) => {
-  console.warn('⚠️ Bot desconectado:', razon);
-});
-
-// ------------------------------------------------------------
-// Manejo de mensajes entrantes
-// ------------------------------------------------------------
-client.on('message', async (msg) => {
-  try {
-    console.log(`📩 Mensaje recibido de ${msg.from}: "${msg.body}"`);
-
-    // Filtros básicos
-    if (msg.from === 'status@broadcast') return;
-    if (config.IGNORAR_GRUPOS && msg.from.endsWith('@g.us')) return;
-
-    const contacto = await msg.getContact();
-    const nombre = contacto?.pushname || contacto?.name || 'Sin nombre';
-
-    // Mensajes que no son texto (audio, imagen, documento...)
-    if (msg.type !== 'chat' || !msg.body?.trim()) {
-      guardarPendiente(msg.from, nombre, `[${msg.type}] contenido no textual`);
-      await responder(
-        msg,
-        '🙏 Gracias por escribirnos. Por aquí solo puedo leer mensajes de texto.\n\n' +
-          '📝 Ya dejé tu mensaje registrado para que una persona del equipo lo revise.\n\n' +
-          config.CIERRE
-      );
-      await notificarPersonal(msg.from, nombre, `[${msg.type}]`);
-      return;
+    if (qr) {
+      console.log('\n📲 Escanea este código QR desde WhatsApp:');
+      console.log('   Ajustes → Dispositivos vinculados → Vincular un dispositivo\n');
     }
 
-    // ¿Toca saludar? (primer contacto o tras mucho tiempo sin hablar)
-    const ultimo = ultimoContacto.get(msg.from) || 0;
-    const saludar = Date.now() - ultimo > config.MINUTOS_PARA_SALUDAR_DE_NUEVO * 60 * 1000;
-    ultimoContacto.set(msg.from, Date.now());
-
-    const { texto, resuelto } = generarRespuesta(msg.body, { saludar });
-    await responder(msg, texto);
-
-    console.log(`💬 ${nombre} (${msg.from.replace('@c.us', '')}): "${msg.body}"`);
-
-    if (!resuelto) {
-      guardarPendiente(msg.from, nombre, msg.body);
-      await notificarPersonal(msg.from, nombre, msg.body);
+    if (connection === 'open') {
+      console.log(`\n✅ Bot de *${clinica.nombre}* conectado y escuchando mensajes.\n`);
     }
-  } catch (error) {
-    console.error('❌ Error procesando el mensaje:', error);
-  }
-});
 
-// ------------------------------------------------------------
-// Utilidades
-// ------------------------------------------------------------
-async function responder(msg, texto) {
-  const enviado = await msg.reply(texto);
-  if (enviado?.id?._serialized) enviadosPorBot.add(enviado.id._serialized);
-  return enviado;
+    if (connection === 'close') {
+      const razon = lastDisconnect?.error?.output?.statusCode;
+      if (razon === DisconnectReason.loggedOut) {
+        console.log('👋 Sesión cerrada. Ejecuta npm start y vuelve a escanear el QR.');
+      } else {
+        console.log('⚠️ Desconectado. Reconectando...');
+        iniciarBot();
+      }
+    }
+  });
+
+  // ------------------------------------------------------------
+  // Manejo de mensajes
+  // ------------------------------------------------------------
+  sock.ev.on('messages.upsert', async ({ messages }) => {
+    const msg = messages[0];
+    if (!msg.message || msg.key.fromMe) return;
+    if (!isJidUser(msg.key.remoteJid)) return;
+
+    const chatId = msg.key.remoteJid;
+    const texto = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+
+    console.log(`📩 Mensaje recibido de ${chatId}: "${texto}"`);
+
+    // Agrupar mensajes (debounce)
+    if (!mensajesPendientes.has(chatId)) {
+      mensajesPendientes.set(chatId, []);
+    }
+    mensajesPendientes.get(chatId).push({ msg, texto });
+
+    const existente = mensajesPendientes.get(chatId);
+    if (existente._timeout) clearTimeout(existente._timeout);
+    existente._timeout = setTimeout(() => procesarMensajes(sock, chatId), DELAY_MS);
+  });
 }
 
-async function notificarPersonal(numeroPaciente, nombre, mensaje) {
+async function procesarMensajes(sock, chatId) {
+  const mensajes = mensajesPendientes.get(chatId);
+  mensajesPendientes.delete(chatId);
+  if (!mensajes || !mensajes.length) return;
+
+  const { msg, texto } = mensajes[mensajes.length - 1];
+  const nombre = msg.pushName || 'Sin nombre';
+
+  if (!texto.trim()) {
+    const respuesta = '🙏 Gracias por escribirnos. Por aquí solo puedo leer mensajes de texto.\n\n' +
+      '📝 Ya dejé tu mensaje registrado para que una persona del equipo lo revise.\n\n' +
+      config.CIERRE;
+    await sock.sendMessage(chatId, { text: respuesta });
+    guardarPendiente(chatId, nombre, '[no-texto]');
+    return;
+  }
+
+  const ultimo = ultimoContacto.get(chatId) || 0;
+  const saludar = Date.now() - ultimo > config.MINUTOS_PARA_SALUDAR_DE_NUEVO * 60 * 1000;
+  ultimoContacto.set(chatId, Date.now());
+
+  const { texto: respuesta, resuelto } = generarRespuesta(texto, { saludar });
+  await sock.sendMessage(chatId, { text: respuesta });
+
+  console.log(`💬 ${nombre} (${chatId}): "${texto}"`);
+
+  if (!resuelto) {
+    guardarPendiente(chatId, nombre, texto);
+    await notificarPersonal(sock, chatId, nombre, texto);
+  }
+}
+
+async function notificarPersonal(sock, numeroPaciente, nombre, mensaje) {
   if (!config.NUMERO_PERSONAL) return;
-  const destino = `${config.NUMERO_PERSONAL}@c.us`;
+  const destino = `${config.NUMERO_PERSONAL}@s.whatsapp.net`;
   const aviso =
     `🔔 *Consulta sin respuesta automática*\n\n` +
     `👤 ${nombre}\n` +
-    `📞 wa.me/${numeroPaciente.replace('@c.us', '')}\n` +
+    `📞 wa.me/${numeroPaciente.replace('@s.whatsapp.net', '')}\n` +
     `💬 "${mensaje}"`;
   try {
-    const enviado = await client.sendMessage(destino, aviso);
-    if (enviado?.id?._serialized) enviadosPorBot.add(enviado.id._serialized);
+    await sock.sendMessage(destino, { text: aviso });
   } catch (e) {
     console.error('⚠️ No se pudo avisar al personal:', e.message);
   }
 }
 
-// Cierre ordenado
-process.on('SIGINT', async () => {
-  console.log('\n👋 Cerrando el bot...');
-  try {
-    await client.destroy();
-  } catch {}
-  process.exit(0);
-});
-
-client.initialize();
+iniciarBot();
