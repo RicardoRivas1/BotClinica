@@ -64,15 +64,17 @@ async function iniciarBot() {
   // ------------------------------------------------------------
   // Manejo de mensajes
   // ------------------------------------------------------------
-  sock.ev.on('messages.upsert', async ({ messages }) => {
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
     const msg = messages[0];
     if (!msg.message || msg.key.fromMe) return;
-    if (!isJidUser(msg.key.remoteJid)) return;
 
     const chatId = msg.key.remoteJid;
+    if (!chatId.endsWith('@s.whatsapp.net')) return;
+
     const texto = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
 
-    console.log(`📩 Mensaje recibido de ${chatId}: "${texto}"`);
+    console.log(`📩 Mensaje de ${chatId}: "${texto}"`);
 
     // Agrupar mensajes (debounce)
     if (!mensajesPendientes.has(chatId)) {
@@ -87,34 +89,39 @@ async function iniciarBot() {
 }
 
 async function procesarMensajes(sock, chatId) {
-  const mensajes = mensajesPendientes.get(chatId);
-  mensajesPendientes.delete(chatId);
-  if (!mensajes || !mensajes.length) return;
+  try {
+    const mensajes = mensajesPendientes.get(chatId);
+    mensajesPendientes.delete(chatId);
+    if (!mensajes || !mensajes.length) return;
 
-  const { msg, texto } = mensajes[mensajes.length - 1];
-  const nombre = msg.pushName || 'Sin nombre';
+    const { msg, texto } = mensajes[mensajes.length - 1];
+    const nombre = msg.pushName || 'Sin nombre';
 
-  if (!texto.trim()) {
-    const respuesta = '🙏 Gracias por escribirnos. Por aquí solo puedo leer mensajes de texto.\n\n' +
-      '📝 Ya dejé tu mensaje registrado para que una persona del equipo lo revise.\n\n' +
-      config.CIERRE;
+    if (!texto.trim()) {
+      const respuesta = '🙏 Gracias por escribirnos. Por aquí solo puedo leer mensajes de texto.\n\n' +
+        '📝 Ya dejé tu mensaje registrado para que una persona del equipo lo revise.\n\n' +
+        config.CIERRE;
+      await sock.sendMessage(chatId, { text: respuesta });
+      guardarPendiente(chatId, nombre, '[no-texto]');
+      return;
+    }
+
+    const ultimo = ultimoContacto.get(chatId) || 0;
+    const saludar = Date.now() - ultimo > config.MINUTOS_PARA_SALUDAR_DE_NUEVO * 60 * 1000;
+    ultimoContacto.set(chatId, Date.now());
+
+    const { texto: respuesta, resuelto } = generarRespuesta(texto, { saludar });
+    console.log(`📤 Respondiendo a ${chatId}: "${respuesta.substring(0, 50)}..."`);
     await sock.sendMessage(chatId, { text: respuesta });
-    guardarPendiente(chatId, nombre, '[no-texto]');
-    return;
-  }
 
-  const ultimo = ultimoContacto.get(chatId) || 0;
-  const saludar = Date.now() - ultimo > config.MINUTOS_PARA_SALUDAR_DE_NUEVO * 60 * 1000;
-  ultimoContacto.set(chatId, Date.now());
+    console.log(`💬 ${nombre} (${chatId}): "${texto}"`);
 
-  const { texto: respuesta, resuelto } = generarRespuesta(texto, { saludar });
-  await sock.sendMessage(chatId, { text: respuesta });
-
-  console.log(`💬 ${nombre} (${chatId}): "${texto}"`);
-
-  if (!resuelto) {
-    guardarPendiente(chatId, nombre, texto);
-    await notificarPersonal(sock, chatId, nombre, texto);
+    if (!resuelto) {
+      guardarPendiente(chatId, nombre, texto);
+      await notificarPersonal(sock, chatId, nombre, texto);
+    }
+  } catch (error) {
+    console.error('❌ Error en procesarMensajes:', error);
   }
 }
 
