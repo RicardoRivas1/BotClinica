@@ -1,5 +1,4 @@
-const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, isJidUser } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const path = require('path');
@@ -7,10 +6,6 @@ const path = require('path');
 const { generarRespuesta } = require('./responder');
 const { guardarPendiente } = require('./logger');
 const { clinica, config } = require('./database');
-
-const app = express();
-app.get('/', (req, res) => res.send('Bot activo'));
-app.listen(process.env.PORT || 3000, () => console.log(`🌐 Puerto ${process.env.PORT || 3000}`));
 
 const ultimoContacto = new Map();
 const mensajesPendientes = new Map();
@@ -20,8 +15,9 @@ async function iniciarBot() {
 
   const sock = makeWASocket({
     auth: state,
-    logger: pino({ level: 'fatal' }),
+    logger: pino({ level: 'silent' }),
     browser: ['Clinica Bot', 'Safari', '3.0'],
+    markOnlineOnConnect: true,
   });
 
   sock.ev.on('creds.update', saveCreds);
@@ -40,7 +36,8 @@ async function iniciarBot() {
         console.log('⚠️ Reconectando...');
         setTimeout(iniciarBot, 3000);
       } else {
-        console.log('👋 Sesión cerrada.');
+        console.log('👋 Sesión cerrada. Vuelve a escanear el QR.');
+        process.exit(0);
       }
     }
   });
@@ -81,7 +78,7 @@ async function procesar(sock, chatId) {
     ultimoContacto.set(chatId, Date.now());
 
     const { texto: respuesta, resuelto } = generarRespuesta(texto, { saludar });
-    console.log(`📤 Respondiendo a ${nombre}`);
+    console.log(`📤 Respondiendo a ${nombre}: "${respuesta.substring(0, 50)}..."`);
     await sock.sendMessage(chatId, { text: respuesta });
 
     if (!resuelto) guardarPendiente(chatId, nombre, texto);
@@ -90,4 +87,5 @@ async function procesar(sock, chatId) {
   }
 }
 
+console.log('🚀 Iniciando bot...');
 iniciarBot();
