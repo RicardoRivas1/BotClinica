@@ -2,7 +2,8 @@
  * BOT DE WHATSAPP — CLÍNICA MÉDICA (Baileys)
  */
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay } = require('@whiskeysockets/baileys');
+require('./keep-alive');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const path = require('path');
