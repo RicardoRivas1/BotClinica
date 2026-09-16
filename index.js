@@ -1,11 +1,7 @@
-/**
- * BOT DE WHATSAPP — CLÍNICA MÉDICA
- */
-
 const express = require('express');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, isJidUser } = require('@whiskeysockets/baileys');
+const pino = require('pino');
 const qrcode = require('qrcode-terminal');
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const fs = require('fs');
 const path = require('path');
 
 const { generarRespuesta } = require('./responder');
@@ -14,122 +10,84 @@ const { clinica, config } = require('./database');
 
 const app = express();
 app.get('/', (req, res) => res.send('Bot activo'));
-app.listen(process.env.PORT || 3000, () => {
-  console.log(`🌐 Puerto ${process.env.PORT || 3000}`);
-});
-
-const sesionPath = path.join(__dirname, 'sesion');
-if (fs.existsSync(sesionPath)) {
-  fs.rmSync(sesionPath, { recursive: true, force: true });
-  console.log('🗑️ Sesión anterior borrada');
-}
-
-const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: './sesion' }),
-  webVersionCache: { type: 'remote', remotePath: 'https://raw.githubusercontent.com/nicepkg/nice-dev/main/nice-dev/whatsapp-web.js/nice-dev/whatsapp-web.js/versions.json' },
-  puppeteer: {
-    headless: true,
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-software-rasterizer',
-    ],
-    timeout: 60000,
-  },
-});
+app.listen(process.env.PORT || 3000, () => console.log(`🌐 Puerto ${process.env.PORT || 3000}`));
 
 const ultimoContacto = new Map();
 const mensajesPendientes = new Map();
-const DELAY_MS = 3000;
 
-console.log('🚀 Iniciando bot...');
+async function iniciarBot() {
+  const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'sesion'));
 
-client.on('qr', (qr) => {
-  console.log('\n📲 ESCANEA ESTE QR:\n');
-  qrcode.generate(qr, { small: true });
-});
+  const sock = makeWASocket({
+    auth: state,
+    logger: pino({ level: 'fatal' }),
+    browser: ['Clinica Bot', 'Safari', '3.0'],
+  });
 
-client.on('authenticated', () => console.log('🔐 Autenticado'));
+  sock.ev.on('creds.update', saveCreds);
 
-client.on('auth_failure', (msg) => console.error('❌ Auth falló:', msg));
-
-client.on('ready', () => {
-  console.log(`\n✅ Bot de *${clinica.nombre}* conectado.\n`);
-});
-
-client.on('disconnected', (razon) => {
-  console.log('⚠️ Desconectado:', razon);
-});
-
-// Escuchar TODOS los eventos para debug
-client.on('message', async (msg) => {
-  console.log(`📩 MESSAGE EVENT: from=${msg.from} type=${msg.type} body=${msg.body}`);
-  await manejarMensaje(msg);
-});
-
-client.on('message_create', async (msg) => {
-  if (msg.fromMe) {
-    console.log(`📤 MESSAGE_CREATE: to=${msg.to} body=${msg.body}`);
-  }
-});
-
-async function manejarMensaje(msg) {
-  try {
-    if (msg.from === 'status@broadcast') return;
-    if (config.IGNORAR_GRUPOS && msg.from.endsWith('@g.us')) return;
-
-    if (!mensajesPendientes.has(msg.from)) {
-      mensajesPendientes.set(msg.from, []);
+  sock.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect, qr } = update;
+    if (qr) {
+      console.log('\n📲 ESCANEA ESTE QR:\n');
+      qrcode.generate(qr, { small: true });
     }
-    mensajesPendientes.get(msg.from).push(msg);
+    if (connection === 'open') {
+      console.log(`✅ Bot de *${clinica.nombre}* conectado.`);
+    }
+    if (connection === 'close') {
+      if (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut) {
+        console.log('⚠️ Reconectando...');
+        setTimeout(iniciarBot, 3000);
+      } else {
+        console.log('👋 Sesión cerrada.');
+      }
+    }
+  });
 
-    const existente = mensajesPendientes.get(msg.from);
-    if (existente._timeout) clearTimeout(existente._timeout);
-    existente._timeout = setTimeout(() => procesarMensajes(msg.from), DELAY_MS);
-  } catch (error) {
-    console.error('❌ Error message:', error);
-  }
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
+    for (const msg of messages) {
+      if (msg.key.fromMe) continue;
+      const chatId = msg.key.remoteJid;
+      if (!chatId.endsWith('@s.whatsapp.net')) continue;
+
+      const texto = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+      console.log(`📩 De ${chatId}: "${texto}"`);
+
+      if (!texto.trim()) continue;
+
+      if (!mensajesPendientes.has(chatId)) mensajesPendientes.set(chatId, []);
+      mensajesPendientes.get(chatId).push({ msg, texto });
+
+      const existente = mensajesPendientes.get(chatId);
+      if (existente._timeout) clearTimeout(existente._timeout);
+      existente._timeout = setTimeout(() => procesar(sock, chatId), 3000);
+    }
+  });
 }
 
-async function procesarMensajes(chatId) {
+async function procesar(sock, chatId) {
   try {
     const mensajes = mensajesPendientes.get(chatId);
     mensajesPendientes.delete(chatId);
-    if (!mensajes || !mensajes.length) return;
+    if (!mensajes?.length) return;
 
-    const msg = mensajes[mensajes.length - 1];
-    const contacto = await msg.getContact();
-    const nombre = contacto?.pushname || contacto?.name || 'Sin nombre';
-
-    if (msg.type !== 'chat' || !msg.body?.trim()) {
-      await msg.reply(
-        '🙏 Solo puedo leer mensajes de texto.\n\n' +
-        '📝 Tu mensaje fue registrado.\n\n' + config.CIERRE
-      );
-      guardarPendiente(chatId, nombre, `[${msg.type}]`);
-      return;
-    }
+    const { msg, texto } = mensajes[mensajes.length - 1];
+    const nombre = msg.pushName || 'Sin nombre';
 
     const ultimo = ultimoContacto.get(chatId) || 0;
     const saludar = Date.now() - ultimo > config.MINUTOS_PARA_SALUDAR_DE_NUEVO * 60 * 1000;
     ultimoContacto.set(chatId, Date.now());
 
-    const { texto, resuelto } = generarRespuesta(msg.body, { saludar });
-    console.log(`📤 Respondiendo a ${chatId}: "${texto.substring(0, 50)}..."`);
-    await msg.reply(texto);
+    const { texto: respuesta, resuelto } = generarRespuesta(texto, { saludar });
+    console.log(`📤 Respondiendo a ${nombre}`);
+    await sock.sendMessage(chatId, { text: respuesta });
 
-    console.log(`💬 ${nombre}: "${msg.body}"`);
-
-    if (!resuelto) {
-      guardarPendiente(chatId, nombre, msg.body);
-    }
-  } catch (error) {
-    console.error('❌ Error procesar:', error);
+    if (!resuelto) guardarPendiente(chatId, nombre, texto);
+  } catch (e) {
+    console.error('❌ Error:', e.message);
   }
 }
 
-console.log('⏳ Conectando...');
-client.initialize();
+iniciarBot();
