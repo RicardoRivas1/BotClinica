@@ -1,6 +1,5 @@
 FROM node:20-slim
 
-# Instalar Chromium
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
@@ -9,6 +8,7 @@ RUN apt-get update && apt-get install -y \
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV NODE_OPTIONS=--max-old-space-size=384
 
 WORKDIR /app
 
