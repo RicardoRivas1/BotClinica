@@ -1,11 +1,24 @@
+const express = require('express');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const path = require('path');
 
 const { generarRespuesta } = require('./responder');
 const { guardarPendiente } = require('./logger');
 const { clinica, config } = require('./database');
+
+let qrImagen = null;
+
+const app = express();
+app.get('/', (req, res) => {
+  if (qrImagen) {
+    res.send(`<html><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#111;flex-direction:column;font-family:sans-serif;color:white"><h2>Escanea el QR con WhatsApp</h2><img src="${qrImagen}" style="width:350px;border-radius:10px"><p>Ajustes > Dispositivos vinculados > Vincular dispositivo</p></body></html>`);
+  } else {
+    res.send('Bot activo - Esperando conexion...');
+  }
+});
+app.listen(process.env.PORT || 3000, () => console.log(`🌐 Abre la URL en el navegador para ver el QR`));
 
 const ultimoContacto = new Map();
 const mensajesPendientes = new Map();
@@ -22,21 +35,23 @@ async function iniciarBot() {
 
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('connection.update', (update) => {
+  sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
     if (qr) {
-      console.log('\n📲 ESCANEA ESTE QR:\n');
-      qrcode.generate(qr, { small: true });
+      qrImagen = await QRCode.toDataURL(qr, { width: 400, margin: 2 });
+      console.log('📲 QR generado - Abre la URL en tu navegador para escanearlo');
     }
     if (connection === 'open') {
+      qrImagen = null;
       console.log(`✅ Bot de *${clinica.nombre}* conectado.`);
     }
     if (connection === 'close') {
+      qrImagen = null;
       if (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut) {
         console.log('⚠️ Reconectando...');
         setTimeout(iniciarBot, 3000);
       } else {
-        console.log('👋 Sesión cerrada. Vuelve a escanear el QR.');
+        console.log('👋 Sesión cerrada.');
         process.exit(0);
       }
     }
@@ -78,7 +93,7 @@ async function procesar(sock, chatId) {
     ultimoContacto.set(chatId, Date.now());
 
     const { texto: respuesta, resuelto } = generarRespuesta(texto, { saludar });
-    console.log(`📤 Respondiendo a ${nombre}: "${respuesta.substring(0, 50)}..."`);
+    console.log(`📤 Respondiendo a ${nombre}`);
     await sock.sendMessage(chatId, { text: respuesta });
 
     if (!resuelto) guardarPendiente(chatId, nombre, texto);
