@@ -20,10 +20,11 @@ const { clinica, config } = require('./database');
 // Cliente de WhatsApp
 // ------------------------------------------------------------
 const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: './sesion' }), // guarda la sesión: no pide QR cada vez
+  authStrategy: new LocalAuth({ dataPath: './sesion' }),
   puppeteer: {
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
   },
 });
 
@@ -134,10 +135,6 @@ process.on('SIGINT', async () => {
   console.log('\n👋 Cerrando el bot...');
   try {
     await client.destroy();
-  } catch {}
-  try {
-    const { execSync } = require('child_process');
-    execSync('taskkill /F /IM chrome.exe 2>nul', { stdio: 'ignore' });
   } catch {}
   process.exit(0);
 });

@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: clinica-whatsapp-bot
+    runtime: docker
+    plan: starter
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
