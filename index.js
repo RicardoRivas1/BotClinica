@@ -57,9 +57,11 @@ async function iniciarBot() {
     }
   });
 
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
-    for (const msg of messages) {
+  sock.ev.on('messages.upsert', async (upsert) => {
+    console.log(`🔔 EVENTO messages.upsert: type=${upsert.type} count=${upsert.messages.length}`);
+    if (upsert.type !== 'notify') return;
+    for (const msg of upsert.messages) {
+      console.log(`📨 Mensaje: fromMe=${msg.key.fromMe} jid=${msg.key.remoteJid}`);
       if (msg.key.fromMe) continue;
       const chatId = msg.key.remoteJid;
       if (!chatId.endsWith('@s.whatsapp.net')) continue;
