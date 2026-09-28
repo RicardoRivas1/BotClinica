@@ -19,23 +19,26 @@ const clinica = {
   telefonoGeneral: null, // Ej: '+58 212-XXXXXXX'
 };
 
-// ---------- 1. SERVICIOS Y ESTUDIOS ----------
-const servicios = [
-  {
-    nombre: 'ECO (Ecografía)',
-    precio: '$40',
-    telefono: '+58 424-2128645',
-    palabrasClave: ['eco', 'ecografia', 'ecograma', 'ultrasonido', 'eco abdominal'],
-    nota: null, // Ej: 'Debe venir en ayunas de 6 horas'
-  },
+// ---------- 0. ESTUDIOS DE RADIOLOGÍA (precios del Excel) ----------
+// Se cargan desde estudios.js, que se genera a partir del Excel de precios.
+// No hace falta tocarlos aquí: el bot los encuentra solo.
+const { estudios } = require('./estudios');
 
+// Teléfono para agendar los estudios de radiología.
+const TELEFONO_RADIOLOGIA = '+58 424-2128645';
+
+// ---------- 1. SERVICIOS Y ESTUDIOS ----------
+// Los estudios de radiología (rayos x, ecos, tomografías, mamografías, densitometrías)
+// ya NO se escriben aquí: se cargan solos desde estudios.js con los precios del Excel.
+// Este arreglo es solo para otros servicios que quieras agregar (análisis, consultas, etc).
+const servicios = [
   /* ---- PLANTILLA: copia este bloque para agregar más servicios ----
   {
-    nombre: 'RAYOS X',
-    precio: '$35',
+    nombre: 'consulta médica general',
+    precio: '$40',
     telefono: '+58 412-XXXXXXX',
-    palabrasClave: ['rayos x', 'radiografia', 'placa'],
-    nota: null,
+    palabrasClave: ['consulta general', 'medico general'],
+    nota: null, // Ej: 'Trae tu cédula y el resultado de tus exámenes'
   },
   ------------------------------------------------------------------ */
 ];
@@ -591,4 +594,4 @@ const config = {
   CIERRE: '¿Puedo ayudarte con algo más? 😊',
 };
 
-module.exports = { clinica, servicios, especialidades, config };
+module.exports = { clinica, servicios, especialidades, estudios, config, TELEFONO_RADIOLOGIA };

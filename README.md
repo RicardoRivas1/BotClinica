@@ -33,15 +33,31 @@ npm install
 
 ## 3. Configura tu clínica
 
-Abre **`src/database.js`** y edita:
+Abre **`database.js`** y edita:
 
 - `clinica` → nombre, horario, dirección, teléfono
-- `servicios` → cada estudio con su precio, teléfono y palabras clave
+- `TELEFONO_RADIOLOGIA` → teléfono que se da para agendar los estudios de imágenes
 - `especialidades` → cada doctor con consultorio, precio y teléfono
+- `servicios` → otros servicios que quieras ofrecer (análisis, consultas, etc.)
 - `config.NUMERO_PERSONAL` → número que recibirá las consultas que el bot no sepa responder
   (formato `584141234567`, sin `+`, sin espacios ni guiones)
 
 Hay **plantillas comentadas** listas para copiar y pegar.
+
+### 3.1. Precios de radiología
+
+Los estudios de imágenes (rayos X, ecos, tomografías, mamografías, densitometrías, etc.)
+**no se escriben a mano**: viven en **`estudios.js`**, que se generó desde el Excel
+`LISTADO Precios RADIOLOGIA.xlsx` (pestaña `01-11-22`, precios en dólares).
+
+Para actualizar los precios cuando cambie la tabla de precios:
+
+1. Reemplaza el Excel en la carpeta del proyecto (la hoja más reciente es la que se usa).
+2. Vuelve a generar `estudios.js` y reinicia el bot.
+
+El bot entiende las palabras que usan los pacientes: si escriben *"placa de la columna
+cervical"*, *"un eco de mama"* o *"tac de cráneo"* encuentra el estudio aunque en el
+Excel se llame *"Columna Cervical 2 Proyecciones"*, *"Eco Mamario"* o *"Tac Cráneo"*.
 
 ---
 
@@ -68,9 +84,11 @@ Cuando veas `✅ Bot conectado y escuchando mensajes`, ya está funcionando.
 
 | Situación | Respuesta |
 |---|---|
-| "Hola" | Saludo + lista de servicios y especialidades |
-| "¿Cuánto cuesta un ECO?" | Precio + teléfono para agendar |
-| "¿Cuánto cuesta un ECO y qué doctor tienen de Radiología?" | **Ambas respuestas en un solo mensaje**, separadas |
+| "Hola" | Saludo + resumen de estudios y especialidades |
+| "¿Cuánto cuesta un ECO abdominal?" | Precio + nota de preparación + teléfono para agendar |
+| "¿Cuánto cuesta una radiografía de rodilla?" | Las opciones de rayos X de rodilla con su precio |
+| "Dime los precios de los rayos X" | Resumen de la categoría: desde $15 y cuántos hay |
+| "¿Cuánto cuesta un ECO y qué doctor hay de Cardiología?" | **Ambas respuestas en un solo mensaje**, separadas |
 | "¿Hacen resonancia?" (no está en la base) | Mensaje amable + queda registrado para el personal |
 | Audio, foto o documento | Avisa que solo lee texto y lo deriva al personal |
 | Un humano responde manualmente | El bot se calla **30 min** en ese chat (configurable) |

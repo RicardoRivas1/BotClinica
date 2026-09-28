@@ -3,7 +3,7 @@
  * Detecta palabras clave, arma respuestas múltiples y aplica el formato de WhatsApp.
  */
 
-const { clinica, servicios, especialidades, config } = require('./database');
+const { clinica, servicios, especialidades, estudios, config, TELEFONO_RADIOLOGIA } = require('./database');
 
 /** Quita tildes, signos y pasa a minúsculas para comparar sin errores. */
 function normalizar(texto = '') {
@@ -27,24 +27,235 @@ function coincide(texto, palabrasClave = []) {
   return palabrasClave.some((p) => contiene(texto, p));
 }
 
+// ============================================================
+//  BUSCADOR DE ESTUDIOS DE RADIOLOGÍA
+//  El paciente escribe con sus palabras ("placa de la rodilla",
+//  "cuanto cuesta un tac de craneo"), así que se comparan las
+//  palabras SIGNIFICATIVAS de cada nombre contra las del mensaje.
+// ============================================================
+
+// Cómo llama la gente a cada tipo de estudio.
+const TIPOS = {
+  'Rayos X': ['rayos x', 'radiografia', 'radiografia simple', 'rx', 'rayo x', 'placa'],
+  'Mamografía': ['mamografia', 'mamario', 'mamaria'],
+  'Ecosonograma': ['eco', 'ecografia', 'ecograma', 'ultrasonido', 'ultrasonografico', 'sonografia'],
+  'Tomografía': ['tomografia', 'tac', 'tomografo', 'scanner', 'tacscan', 'corte computado'],
+  'Densitometría': ['densitometria', 'densitometrico', 'masa osea', 'osteoporosis'],
+  'Paquete': ['paquete'],
+  'Contrastes': ['contraste', 'medios de contraste'],
+};
+
+// Palabras que se descartan: no distinguen un estudio de otro.
+const PALABRAS_VACIAS = new Set([
+  'de', 'del', 'la', 'el', 'los', 'las', 'un', 'una', 'unos', 'unas', 'y', 'o', 'u', 'con', 'sin',
+  'para', 'por', 'al', 'en', 'es', 'son', 'esta', 'estan', 'este', 'estas', 'se', 'me', 'mi', 'te',
+  'tu', 'lo', 'que', 'cual', 'cuales', 'cuanto', 'cuanta', 'cuantos', 'cuantas', 'cuesta', 'cuestan',
+  'precio', 'precios', 'valor', 'vale', 'sale', 'cobran', 'costo', 'dime', 'quiero', 'saber', 'dame',
+  'tienen', 'tengo', 'hay', 'hacen', 'pueden', 'puede', 'necesito', 'quieren', 'cuanto', 'cual',
+  'estudio', 'estudios', 'examen', 'examenes', 'radiologia', 'imagen', 'imagenes', 'cuanto',
+]);
+
+// Palabras técnicas que comparten casi todos los estudios de una familia.
+const TOKENS_GENERICOS = new Set([
+  'proyeccion', 'proyecciones', 'radiografia', 'radiografico', 'radiograficos', 'rayos', 'placa',
+  'digital', 'digitalizacion', 'soporte', 'asistencial', 'simple', 'estudio', 'estudios', 'examen',
+  'ecografia', 'ecografico', 'ecograficos', 'eco', 'tomografia', 'tomografico', 'tac',
+  'mamografia', 'mamografico', 'densitometria', 'ultrasonido', 'ultrasonografico', 'scanner',
+  'segun', 'imagen',
+]);
+
+// "bilateral", "ambos", "derecho"... diferencian un estudio de otro pero pesan
+// menos: si el paciente solo dice "rodilla", igual le sirven las variantes.
+const TOKENS_DE_VARIANTE = new Set([
+  'bilaterales', 'bilateral', 'unilateral', 'ambos', 'ambas', 'derecho', 'derecha', 'izquierdo',
+  'izquierda', 'unico', 'unica',
+]);
+const PESO_VARIANTE = 0.4;
+
+// El paciente escribe de otra forma: se equipara a la palabra del estudio.
+const SINONIMOS = {
+  mama: 'mamario', mamas: 'mamario', mamaria: 'mamario',
+  testiculo: 'testicular', testiculos: 'testicular',
+  tiroides: 'tiroideo', tiroid: 'tiroideo', tiroidea: 'tiroideo',
+  prostata: 'prostatico', prostatica: 'prostatico',
+  rinnon: 'renal', rinones: 'renal',
+  ovario: 'ovario', ovaries: 'ovario',
+  higado: 'higado', pancreas: 'pancreas', bazo: 'bazo', vesicula: 'vesicula',
+  craneo: 'craneo', pelvis: 'pelvis', femur: 'femur', humero: 'humero',
+  tibia: 'tibia', cubito: 'cubito',
+  senos: 'seno', seno: 'seno', paranasales: 'paranasal',
+};
+
+// Tipos que sí se buscan por nombre (los "Adicional" son recargos, no estudios).
+const TIPOS_BUSCABLES = Object.keys(TIPOS).concat('Especiales');
+
+// Tipos que el paciente puede pedir la lista completa.
+const ORDEN_TIPOS = [
+  'Rayos X', 'Ecosonograma', 'Tomografía', 'Mamografía', 'Densitometría', 'Paquete', 'Contrastes',
+];
+
+/** Quita la "s" final para que "rodillas" y "rodilla" se entiendan. */
+function raiz(p) {
+  return p.length >= 5 && p.endsWith('s') ? p.slice(0, -1) : p;
+}
+
+function palabrasUtiles(texto) {
+  return normalizar(texto)
+    .split(' ')
+    .filter((p) => p.length >= 3 && !PALABRAS_VACIAS.has(p));
+}
+
+/** Dos palabras hablan del mismo sitio aunque estén escritas distinto. */
+function mismaPalabra(a, b) {
+  if (a === b) return true;
+  if (SINONIMOS[a] === b) return true;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return i >= 6; // comparten prefijo suficiente ("testiculo" ~ "testicular")
+}
+
+// Índice de palabras por estudio (se calcula una sola vez al arrancar).
+for (const e of estudios) {
+  const crudos = [...new Set(palabrasUtiles(e.nombre))].filter((p) => !TOKENS_GENERICOS.has(p));
+  e._tokens = [...new Set(crudos.map(raiz))];
+  e._peso = crudos.reduce((a, p) => a + (TOKENS_DE_VARIANTE.has(p) ? PESO_VARIANTE : 1), 0);
+}
+
+/** Tipos de estudio mencionados en el mensaje ("rayos x", "tac", "mamografia"...). */
+function tiposMencionados(texto) {
+  return ORDEN_TIPOS.filter((t) => TIPOS[t].some((a) => contiene(texto, a)));
+}
+
+/** Precios de una categoría, de menor a mayor, sin repetir. */
+function preciosDe(tipo) {
+  return [
+    ...new Set(estudios.filter((e) => e.tipo === tipo && e.precio).map((e) => Number(e.precio.replace('$', '')))),
+  ].sort((a, b) => a - b);
+}
+
+/**
+ * Busca los estudios que el paciente está preguntando.
+ * @returns {Array} todos los que coinciden, del más probable al menos.
+ */
+function buscarEstudios(texto) {
+  const consulta = [...new Set(palabrasUtiles(texto).map(raiz))];
+  if (!consulta.length) return [];
+
+  const tiposPedidos = new Set(tiposMencionados(texto));
+  const hallados = [];
+
+  for (const e of estudios) {
+    if (!TIPOS_BUSCABLES.includes(e.tipo)) continue;
+    if (!e._tokens.length || !e._peso) continue;
+
+    let pesoAcierto = 0;
+    for (const t of e._tokens) {
+      if (consulta.some((c) => mismaPalabra(c, t))) pesoAcierto += TOKENS_DE_VARIANTE.has(t) ? PESO_VARIANTE : 1;
+    }
+    if (!pesoAcierto) continue;
+    // Con coincidencia parcial se exige la mayoría del nombre del estudio.
+    if (pesoAcierto / e._peso < 0.6) continue;
+
+    const puntaje = pesoAcierto / e._peso + (tiposPedidos.has(e.tipo) ? 5 : 0);
+    hallados.push({ e, puntaje, largo: e._tokens.length });
+  }
+
+  hallados.sort(
+    (a, b) => b.puntaje - a.puntaje || a.largo - b.largo || a.e.nombre.localeCompare(b.e.nombre, 'es')
+  );
+  return hallados.map((h) => h.e);
+}
+
+// Cuántos estudios se listan en una respuesta antes de resumir el resto.
+const MAX_OPCIONES = 8;
+
+// Recargos y extras: se piden por su nombre exacto ("digitalizacion", "placa").
+const EXTRAS = new Map(
+  estudios.filter((e) => e.tipo === 'Adicional').map((e) => [normalizar(e.nombre), e])
+);
+
+function buscarExtra(texto) {
+  const limpio = normalizar(texto);
+  if (EXTRAS.has(limpio)) return EXTRAS.get(limpio);
+  for (const [nombre, e] of EXTRAS) {
+    if (nombre.length >= 6 && limpio.includes(nombre)) return e;
+  }
+  return null;
+}
+
 // ---------- FORMATOS ----------
 function bloqueServicio(s) {
-  const lineas = [
-    `🩺 *${s.nombre}*`,
-    `💵 Precio: *${s.precio}*`,
-    `📞 Agendar: ${s.telefono}`,
-  ];
+  const lineas = [`🩺 *${s.nombre}*`];
+  if (s.precio) lineas.push(`💵 Precio: *${s.precio}*`);
+  if (s.telefono) lineas.push(`📞 Agendar: ${s.telefono}`);
   if (s.nota) lineas.push(`ℹ️ ${s.nota}`);
   return lineas.join('\n');
 }
 
-function bloqueEspecialidad(e) {
+const ICONO_TIPO = {
+  'Rayos X': '🩻',
+  'Ecosonograma': '🩺',
+  'Tomografía': '🖥️',
+  'Mamografía': '🎗️',
+  'Densitometría': '🦴',
+  'Paquete': '🎁',
+  'Contrastes': '💉',
+  'Especiales': '🧪',
+};
+
+/** Un estudio con su precio. */
+function bloqueEstudio(e) {
   const lineas = [
-    `👨‍⚕️ *${e.nombre}* – ${e.doctor}`,
-    `📍 ${e.ubicacion}`,
-    `💵 Consulta: *${e.precio}*`,
-    `📞 Citas: ${e.telefono}`,
+    `${ICONO_TIPO[e.tipo] || '🩺'} *${e.nombre}*`,
+    `💵 Precio: *${e.precio || 'consultar en recepción'}*`,
   ];
+  if (e.nota) lineas.push(`ℹ️ ${e.nota}`);
+  lineas.push(`📞 Agendar: ${TELEFONO_RADIOLOGIA}`);
+  return lineas.join('\n');
+}
+
+/** Varios estudios parecidos: lista compacta con el precio de cada uno. */
+function bloqueLista(titulo, lista, sobrantes = 0) {
+  const lineas = [`*${titulo}*`, ...lista.map((e) => `• ${e.nombre} — *${e.precio || 'consultar'}*`)];
+  const notas = [...new Set(lista.filter((e) => e.nota).map((e) => e.nota))];
+  if (notas.length) lineas.push(`ℹ️ ${notas.join(' · ')}`);
+  if (sobrantes) lineas.push(`…y ${sobrantes} opción${sobrantes > 1 ? 'es' : ''} más. Dime cuál necesitas.`);
+  lineas.push(`📞 Agendar: ${TELEFONO_RADIOLOGIA}`);
+  return lineas.join('\n');
+}
+
+/** Resumen de una categoría: cuánto va desde y cuántos hay. */
+function bloqueResumenTipo(tipo) {
+  const precios = preciosDe(tipo);
+  const total = estudios.filter((e) => e.tipo === tipo).length;
+  return [
+    `${ICONO_TIPO[tipo]} *${tipo}*`,
+    `💵 Desde *$${precios[0]}*`,
+    `📋 Tenemos *${total}* estudios de ${tipo.toLowerCase()}.`,
+    `👉 Dime el nombre exacto (por ejemplo *"${ejemploDe(tipo)}"*) y te doy su precio.`,
+    `📞 Agendar: ${TELEFONO_RADIOLOGIA}`,
+  ].join('\n');
+}
+
+/** Un ejemplo corto y representativo de cada categoría. */
+function ejemploDe(tipo) {
+  const ej = {
+    'Rayos X': 'rayos x de columna cervical',
+    'Ecosonograma': 'eco abdominal',
+    'Tomografía': 'tac de cráneo',
+    'Mamografía': 'mamografía bilateral',
+    'Densitometría': 'densitometría de cuerpo completo',
+    'Paquete': 'paquete mujer',
+    'Contrastes': 'kit de contraste',
+  };
+  return ej[tipo] || tipo.toLowerCase();
+}
+
+function bloqueEspecialidad(e) {
+  const lineas = [`👨‍⚕️ *${e.nombre}* – ${e.doctor}`];
+  if (e.ubicacion) lineas.push(`📍 ${e.ubicacion}`);
+  if (e.precio) lineas.push(`💵 Consulta: *${e.precio}*`);
+  if (e.telefono) lineas.push(`📞 Citas: ${e.telefono}`);
   if (e.horario) lineas.push(`🕒 ${e.horario}`);
   return lineas.join('\n');
 }
@@ -53,17 +264,29 @@ function listaCompleta() {
   const partes = [];
   if (servicios.length) {
     partes.push(
-      `🏥 *Estudios disponibles*\n` +
+      `🏥 *Otros servicios*\n` +
         servicios.map((s) => `• ${s.nombre} — *${s.precio}*`).join('\n')
     );
   }
+  partes.push(
+    `🩻 *Estudios de radiología (imágenes)*\n` +
+      ORDEN_TIPOS.filter((t) => estudios.some((e) => e.tipo === t))
+        .map((t) => {
+          const precios = preciosDe(t);
+          return `• *${t}* — desde *$${precios[0]}* (${estudios.filter((e) => e.tipo === t).length} estudios)`;
+        })
+        .join('\n')
+  );
   if (especialidades.length) {
     partes.push(
       `👨‍⚕️ *Especialidades*\n` +
-        especialidades.map((e) => `• ${e.nombre} (${e.doctor}) — *${e.precio}*`).join('\n')
+        especialidades.map((e) => `• ${e.nombre} (${e.doctor})`).join('\n')
     );
   }
-  partes.push('Escríbeme el nombre del estudio o la especialidad y te doy los detalles. 📲');
+  partes.push(
+    'Escríbeme el nombre del estudio o la especialidad y te doy los detalles. 📲\n' +
+      'Ejemplos: *"eco abdominal"*, *"rayos x de rodilla"*, *"tac de cráneo"*, *"mamografía"*.'
+  );
   return partes.join('\n\n');
 }
 
@@ -99,6 +322,38 @@ function generarRespuesta(mensajeUsuario, opciones = {}) {
   for (const e of especialidades) {
     if (coincide(texto, e.palabrasClave)) {
       bloques.push(bloqueEspecialidad(e));
+      resuelto = true;
+    }
+  }
+
+  // 2b) Estudios de radiología por nombre ("rayos x de rodilla")
+  const tiposPedidos = tiposMencionados(texto);
+  let coincidencias = buscarEstudios(texto);
+  // Si dijo un tipo ("un eco abdominal") solo se muestran estudios de ese tipo.
+  if (tiposPedidos.length === 1) {
+    const delTipo = coincidencias.filter((e) => e.tipo === tiposPedidos[0]);
+    if (delTipo.length) coincidencias = delTipo;
+  }
+
+  const encontrados = coincidencias.slice(0, MAX_OPCIONES);
+  const sobrantes = coincidencias.length - encontrados.length;
+
+  if (encontrados.length === 1) {
+    bloques.push(bloqueEstudio(encontrados[0]));
+    resuelto = true;
+  } else if (encontrados.length > 1) {
+    const titulo = tiposPedidos.length === 1 ? `${tiposPedidos[0]} – opciones` : `Encontré ${encontrados.length} estudios para eso:`;
+    bloques.push(bloqueLista(titulo, encontrados, sobrantes));
+    resuelto = true;
+  } else {
+    // Recargos sueltos ("digitalización", "reimpresión de informe")
+    const extra = buscarExtra(texto);
+    if (extra) {
+      bloques.push(bloqueEstudio(extra));
+      resuelto = true;
+    } else if (tiposPedidos.length === 1) {
+      // Preguntó por una categoría completa ("quiero ver los rayos x")
+      bloques.push(bloqueResumenTipo(tiposPedidos[0]));
       resuelto = true;
     }
   }
@@ -168,4 +423,4 @@ function armar(saludar, cuerpo) {
   return `${encabezado}${cuerpo}\n\n${config.CIERRE}`;
 }
 
-module.exports = { generarRespuesta, normalizar, listaCompleta };
+module.exports = { generarRespuesta, normalizar, listaCompleta, buscarEstudios };
