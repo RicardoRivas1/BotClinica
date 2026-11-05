@@ -3,7 +3,17 @@
  * Detecta palabras clave, arma respuestas múltiples y aplica el formato de WhatsApp.
  */
 
-const { clinica, servicios, especialidades, estudios, config, TELEFONO_RADIOLOGIA } = require('./database');
+const {
+  clinica,
+  servicios,
+  especialidades,
+  estudios,
+  config,
+  TELEFONO_RADIOLOGIA,
+  TELEFONOS_CARDIOLOGIA,
+  SEGUROS,
+  REQUISITOS,
+} = require('./database');
 
 /** Quita tildes, signos y pasa a minúsculas para comparar sin errores. */
 function normalizar(texto = '') {
@@ -218,7 +228,16 @@ function bloqueEstudio(e) {
 function bloqueLista(titulo, lista, sobrantes = 0) {
   const lineas = [`*${titulo}*`, ...lista.map((e) => `• ${e.nombre} — *${e.precio || 'consultar'}*`)];
   const notas = [...new Set(lista.filter((e) => e.nota).map((e) => e.nota))];
-  if (notas.length) lineas.push(`ℹ️ ${notas.join(' · ')}`);
+  const notasUtiles = notas.filter(
+    (nota, i) =>
+      !notas.some(
+        (otra, j) =>
+          j !== i &&
+          otra.length > nota.length &&
+          normalizar(otra).includes(normalizar(nota))
+      )
+  );
+  if (notasUtiles.length) lineas.push(`ℹ️ ${notasUtiles.join(' · ')}`);
   if (sobrantes) lineas.push(`…y ${sobrantes} opción${sobrantes > 1 ? 'es' : ''} más. Dime cuál necesitas.`);
   lineas.push(`📞 Agendar: ${TELEFONO_RADIOLOGIA}`);
   return lineas.join('\n');
@@ -251,11 +270,24 @@ function ejemploDe(tipo) {
   return ej[tipo] || tipo.toLowerCase();
 }
 
+function esCardiologia(e) {
+  return /cardio/i.test(e.nombre);
+}
+
+function iconoEspecialidad(e) {
+  return esCardiologia(e) ? '🫀' : '👨‍⚕️';
+}
+
+function nombreEspecialidad(e) {
+  return `${iconoEspecialidad(e)} ${e.nombre}`;
+}
+
 function bloqueEspecialidad(e) {
-  const lineas = [`👨‍⚕️ *${e.nombre}* – ${e.doctor}`];
+  const lineas = [`${iconoEspecialidad(e)} *${e.nombre}* – ${e.doctor}`];
   if (e.ubicacion) lineas.push(`📍 ${e.ubicacion}`);
   if (e.precio) lineas.push(`💵 Consulta: *${e.precio}*`);
   if (e.telefono) lineas.push(`📞 Citas: ${e.telefono}`);
+  if (esCardiologia(e)) lineas.push(`📞 Contacto cardiología: ${TELEFONOS_CARDIOLOGIA.join(' / ')}`);
   if (e.horario) lineas.push(`🕒 ${e.horario}`);
   return lineas.join('\n');
 }
@@ -265,7 +297,7 @@ function listaCompleta() {
   if (servicios.length) {
     partes.push(
       `🏥 *Otros servicios*\n` +
-        servicios.map((s) => `• ${s.nombre} — *${s.precio}*`).join('\n')
+        servicios.map((s) => `• ${s.nombre}${s.precio ? ` — *${s.precio}*` : ''}`).join('\n')
     );
   }
   partes.push(
@@ -280,7 +312,7 @@ function listaCompleta() {
   if (especialidades.length) {
     partes.push(
       `👨‍⚕️ *Especialidades*\n` +
-        especialidades.map((e) => `• ${e.nombre} (${e.doctor})`).join('\n')
+        especialidades.map((e) => `• ${nombreEspecialidad(e)} (${e.doctor})`).join('\n')
     );
   }
   partes.push(
@@ -288,6 +320,14 @@ function listaCompleta() {
       'Ejemplos: *"eco abdominal"*, *"rayos x de rodilla"*, *"tac de cráneo"*, *"mamografía"*.'
   );
   return partes.join('\n\n');
+}
+
+function bloqueSeguros() {
+  return `🛡️ *Seguros aceptados*\n${SEGUROS.map((s) => `• ${s}`).join('\n')}`;
+}
+
+function bloqueRequisitos() {
+  return `📋 *Requisitos*\n${REQUISITOS.map((r) => `• ${r}`).join('\n')}`;
 }
 
 // ---------- INTENCIONES GENERALES ----------
@@ -298,6 +338,31 @@ const MENU = ['menu', 'servicios', 'estudios', 'precios', 'lista', 'informacion'
 const HORARIO = ['horario', 'horarios', 'a que hora', 'hasta que hora', 'abren', 'cierran', 'atienden'];
 const UBICACION = ['ubicacion', 'direccion', 'donde quedan', 'donde estan', 'como llego', 'mapa'];
 const HUMANO = ['persona', 'humano', 'asesor', 'operador', 'hablar con alguien', 'recepcion', 'secretaria'];
+const SEGUROS_CLAVES = [
+  'seguro',
+  'seguros',
+  'poliza',
+  'cobertura',
+  'seguros miranda',
+  'banesco',
+  'makler',
+  'mapfre',
+  'seguros caracas',
+  'plan caracas',
+  'rontarca',
+  'previsora',
+];
+const REQUISITOS_CLAVES = [
+  'requisito',
+  'requisitos',
+  'documentos',
+  'que necesito',
+  'necesito para',
+  'cedula',
+  'partida de nacimiento',
+  'orden medica',
+  'informe medico',
+];
 
 /**
  * Genera la respuesta para un mensaje del paciente.
@@ -311,7 +376,11 @@ function generarRespuesta(mensajeUsuario, opciones = {}) {
   let resuelto = false;
 
   // 1) Coincidencias en SERVICIOS (puede haber varias en un mismo mensaje)
+  const hayEndoscopiaEspecifica = servicios.some(
+    (s) => !s.generico && /endoscopia/i.test(s.nombre) && coincide(texto, s.palabrasClave)
+  );
   for (const s of servicios) {
+    if (s.generico && hayEndoscopiaEspecifica) continue;
     if (coincide(texto, s.palabrasClave)) {
       bloques.push(bloqueServicio(s));
       resuelto = true;
@@ -319,11 +388,28 @@ function generarRespuesta(mensajeUsuario, opciones = {}) {
   }
 
   // 2) Coincidencias en ESPECIALIDADES
+  // Si el paciente escribe una frase más específica ("cardiología pediátrica"),
+  // no se muestran las especialidades que solo coinciden con la palabra general.
+  const especialidadesEncontradas = [];
   for (const e of especialidades) {
-    if (coincide(texto, e.palabrasClave)) {
-      bloques.push(bloqueEspecialidad(e));
-      resuelto = true;
+    let clave = null;
+    for (const p of e.palabrasClave) {
+      if (contiene(texto, p)) {
+        const normalizada = normalizar(p);
+        if (!clave || normalizada.length > clave.length) clave = normalizada;
+      }
     }
+    if (clave) especialidadesEncontradas.push({ e, clave });
+  }
+  const especialidadesFiltradas = especialidadesEncontradas.filter(
+    ({ clave }) =>
+      !especialidadesEncontradas.some(
+        ({ clave: otra }) => otra.length > clave.length && otra.includes(clave)
+      )
+  );
+  for (const { e } of especialidadesFiltradas) {
+    bloques.push(bloqueEspecialidad(e));
+    resuelto = true;
   }
 
   // 2b) Estudios de radiología por nombre ("rayos x de rodilla")
@@ -369,6 +455,16 @@ function generarRespuesta(mensajeUsuario, opciones = {}) {
     resuelto = true;
   }
 
+  if (coincide(texto, SEGUROS_CLAVES)) {
+    bloques.push(bloqueSeguros());
+    resuelto = true;
+  }
+
+  if (coincide(texto, REQUISITOS_CLAVES)) {
+    bloques.push(bloqueRequisitos());
+    resuelto = true;
+  }
+
   if (!resuelto && coincide(texto, MENU)) {
     bloques.push(listaCompleta());
     resuelto = true;
@@ -388,7 +484,7 @@ function generarRespuesta(mensajeUsuario, opciones = {}) {
   if (!resuelto && coincide(texto, SALUDOS)) {
     return {
       texto:
-        `¡Hola! 👋 Bienvenido(a) a *${clinica.nombre}*.\n\n` +
+        `¡Hola! 👋 ${clinica.bienvenida}\n\n` +
         `${listaCompleta()}\n\n${config.CIERRE}`,
       resuelto: true,
     };
@@ -419,7 +515,7 @@ function generarRespuesta(mensajeUsuario, opciones = {}) {
 
 /** Agrega saludo inicial (si corresponde) y la frase de cierre obligatoria. */
 function armar(saludar, cuerpo) {
-  const encabezado = saludar ? `¡Hola! 👋 Bienvenido(a) a *${clinica.nombre}*.\n\n` : '';
+  const encabezado = saludar ? `¡Hola! 👋 ${clinica.bienvenida}\n\n` : '';
   return `${encabezado}${cuerpo}\n\n${config.CIERRE}`;
 }
 

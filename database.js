@@ -13,7 +13,13 @@
 
 // ---------- DATOS GENERALES ----------
 const clinica = {
-  nombre: 'Clínica Médica',
+  nombre: 'Clínica Dr. A.L. Briceño Rossi, Serviascorp C.A.',
+  bienvenida:
+    'Bienvenido a la Clínica Dr. A.L. Briceño Rossi, Serviascorp C.A.\n' +
+    'Para radiología, ecos y tomografías:\n' +
+    '02125071719\n' +
+    '02125071895\n' +
+    '02125071838',
   horario: 'Lunes a Viernes de 8:00 am a 5:00 pm | Sábados de 8:00 am a 12:00 m',
   direccion: null, // Ej: 'Av. Principal, Torre Médica, Piso 1'
   telefonoGeneral: null, // Ej: '+58 212-XXXXXXX'
@@ -24,14 +30,84 @@ const clinica = {
 // No hace falta tocarlos aquí: el bot los encuentra solo.
 const { estudios } = require('./estudios');
 
-// Teléfono para agendar los estudios de radiología.
-const TELEFONO_RADIOLOGIA = '+58 424-2128645';
+// Teléfonos para agendar los estudios de radiología (radiología, ecos y tomografías).
+const TELEFONOS_RADIOLOGIA = ['02125071719', '02125071895', '02125071838'];
+const TELEFONO_RADIOLOGIA = TELEFONOS_RADIOLOGIA.join(' / ');
+
+// Teléfonos de contacto para todo lo relacionado con cardiología.
+const TELEFONOS_CARDIOLOGIA = ['04242128645', '02125071720'];
+
+// Seguros aceptados.
+const SEGUROS = [
+  'Seguros Miranda',
+  'Banesco',
+  'Makler',
+  'Mapfre',
+  'Caracas',
+  'Plan Administrado Rontarca',
+  'Previsora',
+];
+
+// Requisitos para la atención.
+const REQUISITOS = [
+  'Copia de cédula del paciente; si es menor, copia de la partida de nacimiento.',
+  'Copia de la cédula del titular de la póliza y carnet de dónde labora.',
+  'Informe médico de referencia.',
+  'Para estudios de laboratorio, orden médica.',
+];
 
 // ---------- 1. SERVICIOS Y ESTUDIOS ----------
 // Los estudios de radiología (rayos x, ecos, tomografías, mamografías, densitometrías)
 // ya NO se escriben aquí: se cargan solos desde estudios.js con los precios del Excel.
 // Este arreglo es solo para otros servicios que quieras agregar (análisis, consultas, etc).
 const servicios = [
+  {
+    nombre: 'LABORATORIO CLÍNICO',
+    precio: null,
+    telefono: '02125071885',
+    palabrasClave: [
+      'laboratorio',
+      'laboratorio clinico',
+      'hematologia',
+      'perfil 20',
+      'perfil 21',
+      'quimica sanguinea',
+      'heces',
+      'orina',
+      'examen de laboratorio',
+      'analisis de laboratorio',
+    ],
+    nota: 'Atención las 24 horas',
+  },
+  {
+    nombre: 'ENDOSCOPIA SUPERIOR',
+    precio: '$250',
+    telefono: null,
+    palabrasClave: ['endoscopia superior', 'endoscopia digestiva alta', 'endoscopia alta'],
+    nota: 'Incluye biopsia',
+  },
+  {
+    nombre: 'ENDOSCOPIA INFERIOR',
+    precio: '$280',
+    telefono: null,
+    palabrasClave: ['endoscopia inferior', 'endoscopia digestiva baja', 'colonoscopia', 'endoscopia baja'],
+    nota: 'Incluye biopsia',
+  },
+  {
+    nombre: 'ENDOSCOPIA',
+    precio: null,
+    telefono: null,
+    palabrasClave: ['endoscopia'],
+    nota: 'Superior: $250 · Inferior: $280. Incluye biopsia.',
+    generico: true,
+  },
+  {
+    nombre: 'ATENCIÓN MÉDICA PRIMARIA (APS)',
+    precio: null,
+    telefono: null,
+    palabrasClave: ['aps', 'atencion medica primaria', 'atencion primaria', 'medicina general', 'consulta general'],
+    nota: null,
+  },
   /* ---- PLANTILLA: copia este bloque para agregar más servicios ----
   {
     nombre: 'consulta médica general',
@@ -52,15 +128,6 @@ const especialidades = [
     ubicacion: null,
     precio: null,
     palabrasClave: ['anestesia', 'anestesiologo', 'xiomara', 'nunez'],
-    horario: null,
-  },
-  {
-    nombre: 'CARDIOLOGÍA',
-    doctor: 'Dr. Alexander Hernández',
-    telefono: '+584142552814',
-    ubicacion: 'Consultorio 901, PISO 9',
-    precio: null,
-    palabrasClave: ['cardiologia', 'cardiologo', 'corazon', 'alexander', 'hernandez'],
     horario: null,
   },
   {
@@ -109,12 +176,38 @@ const especialidades = [
     horario: null,
   },
   {
-    nombre: 'CIRUGÍA GENERAL',
-    doctor: 'Dra. Yelitza Manrique',
-    telefono: '+584241105401',
-    ubicacion: 'Consultorio 104, PISO 10',
+    nombre: 'CARDIOLOGÍA PEDIÁTRICA',
+    doctor: 'Dr. Juan Rodríguez',
+    telefono: null,
+    ubicacion: null,
     precio: null,
-    palabrasClave: ['cirugia', 'cirugia general', 'cirujano', 'yelitza', 'manrique'],
+    palabrasClave: [
+      'cardiologia pediatrica',
+      'cardiologia infantil',
+      'cardiopediatria',
+      'cardiologia',
+      'corazon',
+      'juan',
+      'rodriguez',
+    ],
+    horario: null,
+  },
+  {
+    nombre: 'CARDIOLOGÍA',
+    doctor: 'Dr. Alexander Hernández',
+    telefono: '02125071790',
+    ubicacion: 'Consultorio 901, PISO 9',
+    precio: null,
+    palabrasClave: ['cardiologia', 'cardiologo', 'corazon', 'alexander', 'hernandez'],
+    horario: null,
+  },
+  {
+    nombre: 'CIRUGÍA GENERAL',
+    doctor: 'Dr. Carrasco P, Jesús A.',
+    telefono: '+584166331980',
+    ubicacion: 'Consultorio 704, PISO 7',
+    precio: null,
+    palabrasClave: ['cirugia', 'cirugia general', 'cirujano', 'carrasco', 'jesus'],
     horario: null,
   },
   {
@@ -124,6 +217,15 @@ const especialidades = [
     ubicacion: 'Consultorio 806, PISO 8',
     precio: null,
     palabrasClave: ['cirugia', 'cirugia general', 'cirujano', 'marellys', 'matheus'],
+    horario: null,
+  },
+  {
+    nombre: 'CIRUGÍA GENERAL',
+    doctor: 'Dra. Yelitza Manrique',
+    telefono: '+584241105401',
+    ubicacion: 'Consultorio 104, PISO 10',
+    precio: null,
+    palabrasClave: ['cirugia', 'cirugia general', 'cirujano', 'yelitza', 'manrique'],
     horario: null,
   },
   {
@@ -226,15 +328,6 @@ const especialidades = [
     horario: null,
   },
   {
-    nombre: 'GINECOLOGÍA',
-    doctor: 'Dr. Arocha A. Coromoto',
-    telefono: null,
-    ubicacion: 'Consultorio 605, PISO 3',
-    precio: null,
-    palabrasClave: ['ginecologia', 'ginecologo', 'gineco', 'obstetra', 'arocha', 'coromoto'],
-    horario: null,
-  },
-  {
     nombre: 'GASTROENTEROLOGÍA',
     doctor: 'Dr. Orellana S. Simón E.',
     telefono: '+584163026360',
@@ -307,21 +400,21 @@ const especialidades = [
     horario: null,
   },
   {
+    nombre: 'GINECOLOGÍA',
+    doctor: 'Dra Viviana Elisa',
+    telefono: '+584146884575',
+    ubicacion: 'Consultorio 105, PISO 10',
+    precio: null,
+    palabrasClave: ['ginecologia', 'ginecologo', 'gineco', 'obstetra', 'viviana', 'elisa'],
+    horario: null,
+  },
+  {
     nombre: 'HEMATOLOGÍA',
     doctor: 'Dr. Inaty L. Joaquín J.',
     telefono: null,
     ubicacion: 'piso 4',
     precio: null,
-    palabrasClave: ['hematologia', 'hematologo', 'sangre', 'inaty', 'joaquin'],
-    horario: null,
-  },
-  {
-    nombre: 'GINECOLOGÍA',
-    doctor: 'Dr. Marín O, Manuel R.',
-    telefono: '+584142505124',
-    ubicacion: 'Consultorio 905, PISO 9',
-    precio: null,
-    palabrasClave: ['ginecologia', 'ginecologo', 'gineco', 'obstetra'],
+    palabrasClave: ['hematologia', 'hematologo', 'hematologos', 'sangre', 'inaty', 'joaquin'],
     horario: null,
   },
   {
@@ -348,7 +441,7 @@ const especialidades = [
     telefono: '+584125444863',
     ubicacion: 'piso 4, PISO 4',
     precio: null,
-    palabrasClave: ['hematologia oncologica', 'andrea', 'sanchez'],
+    palabrasClave: ['hematologia', 'hematologo', 'hematologos', 'hematologia oncologica', 'andrea', 'sanchez'],
     horario: null,
   },
   {
@@ -371,11 +464,20 @@ const especialidades = [
   },
   {
     nombre: 'MEDICINA INTERNA',
+    doctor: 'Dra Josselyn Pazos',
+    telefono: '+584249339654',
+    ubicacion: 'Consultorio 703, PISO 7',
+    precio: null,
+    palabrasClave: ['internista', 'medicina interna', 'josselyn', 'pazos'],
+    horario: null,
+  },
+  {
+    nombre: 'NEUMOLOGÍA',
     doctor: 'Dra. Quiñones S. Maira E.',
     telefono: '+584166207877',
     ubicacion: 'Consultorio 906, PISO 9',
     precio: null,
-    palabrasClave: ['internista', 'medicina interna', 'quinones', 'maira'],
+    palabrasClave: ['neumologia', 'neumonologia', 'neumologo', 'pulmon', 'quinones', 'maira'],
     horario: null,
   },
   {
@@ -397,12 +499,21 @@ const especialidades = [
     horario: null,
   },
   {
-    nombre: 'NEUMONOLOGÍA',
+    nombre: 'NEUMOLOGÍA',
     doctor: 'Dr. Salazar B. Lisbeth C.',
     telefono: '+584166130136',
     ubicacion: 'Consultorio 801, PISO 8',
     precio: null,
-    palabrasClave: ['neumonologia', 'neumonologo', 'pulmon', 'salazar', 'lisbeth'],
+    palabrasClave: ['neumologia', 'neumonologia', 'neumologo', 'pulmon', 'salazar', 'lisbeth'],
+    horario: null,
+  },
+  {
+    nombre: 'NEUMOLOGÍA',
+    doctor: 'Dra. Edermary Nuñez',
+    telefono: '+584246811400',
+    ubicacion: 'Consultorio 506, PISO 5',
+    precio: null,
+    palabrasClave: ['neumologia', 'neumonologia', 'neumologo', 'pulmon', 'nunez', 'edermary'],
     horario: null,
   },
   {
@@ -452,15 +563,6 @@ const especialidades = [
   },
   {
     nombre: 'OTORRINOLARINGOLOGÍA',
-    doctor: 'Dra. Ruiz Ruiz, Aida María',
-    telefono: '+584143121194',
-    ubicacion: 'Consultorio 106',
-    precio: null,
-    palabrasClave: ['otorrinolaringologia', 'otorrino', 'nariz', 'oido', 'ruiz'],
-    horario: null,
-  },
-  {
-    nombre: 'OTORRINOLARINGOLOGÍA',
     doctor: 'Dra Carmen Maria Artigas',
     telefono: '+584242018259',
     ubicacion: 'PB',
@@ -492,7 +594,7 @@ const especialidades = [
     telefono: '+584246811400',
     ubicacion: 'Consultorio 506, PISO 5',
     precio: null,
-    palabrasClave: ['pediatria', 'pediatra', 'neumologia', 'edermary', 'nunez'],
+    palabrasClave: ['pediatria', 'pediatra', 'edermary', 'nunez'],
     horario: null,
   },
   {
@@ -550,15 +652,6 @@ const especialidades = [
     horario: null,
   },
   {
-    nombre: 'TRAUMATOLOGÍA',
-    doctor: 'Dr. David Medina',
-    telefono: '+584248684959',
-    ubicacion: 'Consultorio 804',
-    precio: null,
-    palabrasClave: ['traumatologia', 'traumatologo', 'ortopedia', 'huesos', 'david', 'medina'],
-    horario: null,
-  },
-  {
     nombre: 'UROLOGÍA',
     doctor: 'Dr. Ali Hamad Alkam',
     telefono: '+584127236283',
@@ -594,4 +687,15 @@ const config = {
   CIERRE: '¿Puedo ayudarte con algo más? 😊',
 };
 
-module.exports = { clinica, servicios, especialidades, estudios, config, TELEFONO_RADIOLOGIA };
+module.exports = {
+  clinica,
+  servicios,
+  especialidades,
+  estudios,
+  config,
+  TELEFONO_RADIOLOGIA,
+  TELEFONOS_RADIOLOGIA,
+  TELEFONOS_CARDIOLOGIA,
+  SEGUROS,
+  REQUISITOS,
+};
